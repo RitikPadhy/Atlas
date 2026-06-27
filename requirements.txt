@@ -1,0 +1,10 @@
+# The CORE AI Agent Center uses only the Python standard library — nothing to
+# install for it. It does require the Ollama runtime to be installed and running:
+#   https://ollama.com/download
+#
+# The libraries below are OPTIONAL — needed only for the Google services in
+# services/Google/ (Gmail, Calendar, Drive, Sheets). Install them with:
+#   pip install -r requirements.txt
+google-api-python-client>=2.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0

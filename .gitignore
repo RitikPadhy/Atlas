@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# Secrets — NEVER commit these
+**/credentials.json     # Google OAuth client secrets
+**/tokens/              # saved OAuth tokens (contain refresh tokens)
+**/token*.json
+*.env
+.env
+secrets.json
+
+# (Mailbox password lives only in an env var, never in a file.)
+
+# Local config with your real values — copy config.example.json → config.json
+config.json
+
