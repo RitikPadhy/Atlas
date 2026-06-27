@@ -8,3 +8,7 @@
 google-api-python-client>=2.0.0
 google-auth>=2.0.0
 google-auth-oauthlib>=1.0.0
+
+# Optional — enables the live "/" command/shortcut dropdown as you type.
+# Without it, "/" + Enter still lists shortcuts (plain-input fallback).
+prompt_toolkit>=3.0.0

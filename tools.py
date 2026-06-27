@@ -247,6 +247,16 @@ SCHEMAS: List[Dict] = [
     {
         "type": "function",
         "function": {
+            "name": "list_accounts",
+            "description": "List ALL connected accounts — both Google (Gmail/Calendar/Drive/Sheets) "
+                           "and the private IMAP/SMTP email — with their addresses and status. Use this "
+                           "whenever the user asks which email/accounts are connected.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "google_accounts",
             "description": "List the configured Google account aliases, which are authorized, "
                            "and the real email address each one maps to. Use this when the user "
@@ -438,6 +448,54 @@ SCHEMAS: List[Dict] = [
 ]
 
 
+def _cmd(args, timeout=10):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout
+    except Exception:
+        return ""
+
+
+def _mem_free_pct():
+    m = re.search(r"free percentage:\s*(\d+)%", _cmd(["memory_pressure"]))
+    return int(m.group(1)) if m else None
+
+
+def _disk_root():
+    """(avail_gb, used_pct) for /."""
+    lines = _cmd(["df", "-k", "/"]).splitlines()
+    if len(lines) < 2:
+        return (None, None)
+    p = lines[1].split()
+    try:
+        return (int(p[3]) / 1024 / 1024, int(p[4].rstrip("%")))  # avail KB -> GB, capacity %
+    except (IndexError, ValueError):
+        return (None, None)
+
+
+def _battery():
+    """(percent, on_ac_power)."""
+    out = _cmd(["pmset", "-g", "batt"])
+    m = re.search(r"(\d+)%", out)
+    return (int(m.group(1)) if m else None, "AC Power" in out)
+
+
+def _loadavg():
+    m = re.findall(r"[\d.]+", _cmd(["sysctl", "-n", "vm.loadavg"]))
+    return float(m[0]) if m else None
+
+
+def _top_cpu():
+    """(percent, name) of the busiest process."""
+    lines = _cmd(["bash", "-c", "ps -Aceo pcpu,comm -r | head -2"]).splitlines()
+    if len(lines) >= 2:
+        p = lines[1].strip().split(None, 1)
+        try:
+            return (float(p[0]), p[1] if len(p) > 1 else "?")
+        except ValueError:
+            pass
+    return (None, None)
+
+
 class ToolBox:
     def __init__(self, config: dict, confirm: Callable[[str], bool], notify: Callable[[str], None]):
         self.cfg = config
@@ -533,16 +591,47 @@ class ToolBox:
         return self._truncate(out.strip()) + f"\n(exit code {p.returncode})"
 
     def mac_health(self) -> str:
-        parts = []
-        parts.append("== Loaded models ==\n" + self._run(["ollama", "ps"]))
-        mem = self._run(["memory_pressure"], timeout=10)
-        free = next((l for l in mem.splitlines() if "free percentage" in l.lower()), mem.splitlines()[-1] if mem else "")
-        parts.append("== Memory ==\n" + free)
-        parts.append("== Disk ==\n" + self._run(["df", "-h", "/"]))
-        parts.append("== Battery ==\n" + self._run(["pmset", "-g", "batt"]))
-        parts.append("== Uptime / load ==\n" + self._run(["uptime"]))
-        parts.append("== Top CPU ==\n" + self._run(["bash", "-c", "ps -Aceo pcpu,comm -r | head -6"]))
-        return self._truncate("\n\n".join(parts))
+        """System health with a DETERMINISTIC 'needs attention' verdict computed
+        here in code (not left to the model), so the alerts are always correct."""
+        cores = None
+        try:
+            cores = int(_cmd(["sysctl", "-n", "hw.logicalcpu"]).strip())
+        except ValueError:
+            pass
+        mem = _mem_free_pct()
+        avail_gb, used_pct = _disk_root()
+        batt, on_ac = _battery()
+        load1 = _loadavg()
+        top_pct, top_name = _top_cpu()
+        models = self._run(["ollama", "ps"]).strip()
+
+        status = ["## Status"]
+        status.append(f"- Memory: {mem}% free" if mem is not None else "- Memory: (unknown)")
+        status.append(f"- Disk: {avail_gb:.0f} GB free ({used_pct}% used)"
+                      if avail_gb is not None else "- Disk: (unknown)")
+        status.append(f"- Battery: {batt}% ({'on AC' if on_ac else 'on battery'})"
+                      if batt is not None else "- Battery: (unknown)")
+        cpu = f"- CPU load (1-min): {load1:.2f} on {cores or '?'} cores" if load1 is not None else "- CPU load: (unknown)"
+        if top_pct is not None:
+            cpu += f"; top: {top_name} @ {top_pct:.0f}%"
+        status.append(cpu)
+        status.append("- GPU models loaded: " + (models.replace("\n", " | ") if models else "none"))
+
+        # --- deterministic alerts ---
+        alerts = []
+        if avail_gb is not None and (avail_gb < 20 or (used_pct is not None and used_pct >= 90)):
+            alerts.append(f"⚠ Disk low: {avail_gb:.0f} GB free ({used_pct}% used) → free up space")
+        if mem is not None and mem < 10:
+            alerts.append(f"⚠ Memory pressure: only {mem}% free → close heavy apps before loading a model")
+        if batt is not None and batt < 20 and not on_ac:
+            alerts.append(f"⚠ Battery low: {batt}% on battery → plug in")
+        if load1 is not None and cores and load1 > cores:
+            alerts.append(f"⚠ High CPU load: {load1:.2f} on {cores} cores → something's working hard")
+        if top_pct is not None and top_pct > 80:
+            alerts.append(f"⚠ {top_name} is using {top_pct:.0f}% CPU")
+
+        attn = "## NEEDS ATTENTION\n" + ("\n".join(alerts) if alerts else "Nothing — all healthy.")
+        return "\n".join(status) + "\n\n" + attn
 
     def web_search(self, query: str, num_results: int = 5) -> str:
         return _ddg_search(query, int(num_results) if num_results else 5)
@@ -616,6 +705,22 @@ class ToolBox:
         if isinstance(e, ImportError):
             return ("Google libraries not installed. Run:  pip install -r requirements.txt")
         return f"Google error: {e}"
+
+    def list_accounts(self) -> str:
+        """All connected accounts: Google + the private IMAP/SMTP email."""
+        import os
+        parts = []
+        if self.cfg.get("google", {}).get("accounts"):
+            parts.append(self.google_accounts())
+        email_accounts = self.cfg.get("email", {}).get("accounts", {})
+        if email_accounts:
+            lines = ["Private email (IMAP/SMTP):"]
+            for alias, a in email_accounts.items():
+                ready = bool(os.environ.get(a.get("password_env", "PRIVATE_EMAIL_PW")))
+                lines.append(f"- {alias}: {a.get('address', '?')} "
+                             f"({'ready' if ready else 'password env not set'})")
+            parts.append("\n".join(lines))
+        return "\n\n".join(parts) if parts else "No accounts configured."
 
     def google_accounts(self) -> str:
         """List configured Google aliases, whether each is authorized, and its email."""
