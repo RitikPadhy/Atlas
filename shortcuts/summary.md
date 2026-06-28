@@ -1,3 +1,5 @@
+requires: google, email
+
 Summarize all the emails I received TODAY across all of my accounts.
 
 Do this:

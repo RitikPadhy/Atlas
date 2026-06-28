@@ -38,10 +38,11 @@ Guidelines:
 
 
 def run(toolbox: "tools_mod.ToolBox", backend, messages: List[Dict],
-        max_steps: int, think: bool) -> List[Dict]:
-    """Run the agent loop, mutating and returning `messages`."""
+        tools: List[Dict], max_steps: int, think: bool) -> List[Dict]:
+    """Run the agent loop, mutating and returning `messages`. `tools` is the
+    resolved schema list for this turn (core + whatever packs are active)."""
     for _ in range(max_steps):
-        reply = backend.chat(messages, tools=tools_mod.SCHEMAS, think=think)
+        reply = backend.chat(messages, tools=tools, think=think)
         calls = reply.get("tool_calls") or []
 
         if not calls:

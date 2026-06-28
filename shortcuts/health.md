@@ -1,3 +1,5 @@
+requires: mac
+
 Check my Mac's health right now.
 
 Do this:

@@ -8,6 +8,10 @@
   },
   "think_by_default": false,
   "max_steps": 12,
+  "tool_loading": {
+    "ollama": "lean",
+    "claude": "all"
+  },
   "browser_app": "Google Chrome",
   "max_tool_output_chars": 6000,
   "google": {

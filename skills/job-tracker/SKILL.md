@@ -1,4 +1,5 @@
 # Job Tracker — run a job search end to end: discover, apply, track, interview, offer
+requires: job-tracker
 
 ## When to use this skill
 Engage for anything in the user's **job search**: finding roles, evaluating a job

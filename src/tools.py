@@ -556,7 +556,8 @@ def _top_cpu():
     return (None, None)
 
 
-_JOB_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+# tools.py lives in src/; the job-tracker skill (and its data) lives in the repo root.
+_JOB_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "skills", "job-tracker", "data")
 _JOB_FILE = os.path.join(_JOB_DATA_DIR, "applications.json")
 
@@ -574,6 +575,47 @@ def _job_save(records):
     os.makedirs(_JOB_DATA_DIR, exist_ok=True)
     with open(_JOB_FILE, "w") as f:
         json.dump(records, f, indent=2)
+
+
+# --- Capability packs -------------------------------------------------------
+# Which pack each tool belongs to. "core" tools are always loaded; the rest load
+# only when their pack is active (see docs/capability-packs.md). This keeps the
+# model's resident tool list small regardless of how many packs exist.
+_PACK_OF = {
+    # core — universal verbs, always available
+    "open_url": "core", "open_app": "core", "open_path": "core", "list_dir": "core",
+    "read_file": "core", "write_file": "core", "run_shell": "core",
+    "web_search": "core", "web_fetch": "core", "ask_coder": "core",
+    "list_accounts": "core",
+    # mac — local system
+    "mac_health": "mac", "reminders": "mac", "calendar_today": "mac",
+    # google
+    "gmail_search": "google", "gmail_send": "google", "gcal_events": "google",
+    "gcal_create_event": "google", "drive_search": "google", "sheets_read": "google",
+    "sheets_write": "google", "google_accounts": "google",
+    # email (private IMAP/SMTP)
+    "mail_search": "email", "mail_read": "email", "mail_send": "email",
+    # job-tracker
+    "job_add": "job-tracker", "job_update": "job-tracker", "job_list": "job-tracker",
+}
+
+# Available (non-core) pack names, sorted.
+PACKS = sorted({p for p in _PACK_OF.values() if p != "core"})
+
+
+def active_schemas(active_packs, is_local: bool = True):
+    """Tool schemas the model should see: core + any active packs. `ask_coder`
+    (local-coder delegation) is dropped for non-local backends like Claude."""
+    allowed = {"core"} | set(active_packs or [])
+    out = []
+    for s in SCHEMAS:
+        name = s["function"]["name"]
+        if _PACK_OF.get(name, "core") not in allowed:
+            continue
+        if name == "ask_coder" and not is_local:
+            continue
+        out.append(s)
+    return out
 
 
 class ToolBox:

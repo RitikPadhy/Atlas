@@ -17,7 +17,7 @@ exposed to the agent as tools. All free (quota-limited, no billing).
 
 **1. Install the libraries** (the core app doesn't need these; only Google tools do):
 ```sh
-pip install -r requirements.txt
+pip install -r src/requirements.txt
 ```
 
 **2. Make a Google Cloud project + OAuth client (free, ~5 min):**

@@ -71,31 +71,48 @@ BRAIN  →  qwen3:8b, resident. Reads intent, calls tools, answers.
   ollama pull qwen2.5-coder:7b   # the coding specialist
   ```
 
+## Layout
+
+The application code lives in **`src/`**; content and packages live at the repo root:
+`backends/` (model backends), `services/` (Google, private email), `shortcuts/`,
+`skills/`, and `docs/`. Only `README.md` and `.gitignore` sit loose in root.
+
 ## Install
 
 ```sh
-cd ai-agent-center
+cd ai-agent-center/src
 cp config.example.json config.json   # your real config (git-ignored; never pushed)
 ./install.sh        # adds an `ai` alias to ~/.zshrc or ~/.bashrc
 source ~/.zshrc     # or open a new terminal
 ai
 ```
 
-`config.json` holds your personal values (email address, account aliases) and is
-**git-ignored** — only the placeholder `config.example.json` is committed.
+`src/config.json` holds your personal values (email address, account aliases) and is
+**git-ignored** — only the placeholder `src/config.example.json` is committed.
 
-Or run directly: `python3 ai_agent.py`.
+Or run directly: `python3 src/ai_agent.py`.
 
 ## Commands
 
 | Command | Action |
 | ------- | ------ |
 | (plain text) | Tell the brain what you want |
+| `/` | Menu of commands + shortcuts (live dropdown) |
+| `@` | Skills & capability packs (live dropdown) |
+| `@<pack>` | Load a capability pack's tools (e.g. `@google`, `@mac`) |
+| `@<skill>` | Engage a skill's playbook + its tools (e.g. `@job-tracker`) |
+| `/<shortcut>` | Run a saved prompt (e.g. `/summary`, `/health`) |
+| `/packs` | List capability packs and which are loaded |
 | `/think` | Toggle qwen3's thinking mode (deeper reasoning, slower) |
-| `/tools` | List the tools the brain can call |
-| `/reset` | Clear the conversation |
+| `/tools` | List the tools currently loaded for the brain |
+| `/reset` | Clear the conversation (and reset loaded packs) |
 | `/exit` `/q` | Quit (models auto-unload) |
 | `Ctrl-C` | Interrupt |
+
+**Capability packs:** to keep the model sharp, only a lean **core** tool set is always
+loaded; specialized tools (Google, private email, Mac, job-tracker) live in *packs* that
+load on demand — when you type `@<pack>`, or when a shortcut/skill declares it needs them.
+See [`docs/capability-packs.md`](docs/capability-packs.md).
 
 ## Tools the brain can call
 
@@ -123,7 +140,7 @@ Or run directly: `python3 ai_agent.py`.
 **System Settings → Privacy & Security → Automation**.
 
 The Google tools live in **`services/Google/`** and need a one-time OAuth setup
-(`pip install -r requirements.txt`, a free Cloud project, then
+(`pip install -r src/requirements.txt`, a free Cloud project, then
 `python3 services/Google/authorize.py <account>` per account — see
 [`services/Google/README.md`](services/Google/README.md)). Until that's done the
 Google tools just report they aren't set up; the rest of the agent works regardless.
@@ -143,19 +160,18 @@ Google tools just report they aren't set up; the rest of the agent works regardl
 
 ## Project layout
 
-| File | Responsibility |
+| Path | Responsibility |
 | ---- | -------------- |
-| `ai_agent.py` | REPL entry point — input, secret scan, `/` shortcuts, `@` skills |
-| `agent.py` | The orchestrator loop (provider-agnostic) + system prompt |
-| `backends/` | Model backends behind one interface (`base.py`, `ollama_backend.py`) |
-| `tools.py` | The tools (verbs) + `ask_coder` delegation |
-| `ollama_client.py` | `ollama list` + tool-calling `/api/chat` (used by the Ollama backend) |
-| `shortcuts/` | `/`-invoked saved prompts · `skills/` — `@`-invoked playbooks |
-| `secret_scanner.py` | Regex secret detection |
-| `ui.py` | Terminal colors / prompts |
-| `config.json` | All tunables |
-| `install.sh` | Adds the `ai` alias |
-| `ThingsToDo.md` | Roadmap |
+| `src/ai_agent.py` | REPL entry point — input, secret scan, `/` shortcuts, `@` skills & packs |
+| `src/agent.py` | The orchestrator loop (provider-agnostic) + system prompt |
+| `src/tools.py` | The tools (verbs), capability-pack registry, `ask_coder` delegation |
+| `src/ollama_client.py` | `ollama list` + tool-calling `/api/chat` (used by the Ollama backend) |
+| `src/secret_scanner.py` · `src/ui.py` | Secret detection · terminal colors/prompts |
+| `src/config.json` · `src/install.sh` | Your settings (git-ignored) · adds the `ai` alias |
+| `backends/` | Model backends behind one interface (`ollama`, `claude`) — repo root |
+| `services/` | Google + private-email API clients — repo root |
+| `shortcuts/` · `skills/` | `/`-invoked saved prompts · `@`-invoked playbooks — repo root |
+| `docs/` | Architecture & how-to docs (capability packs, providers, roadmap) |
 
 ## Switching models / providers
 
