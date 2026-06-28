@@ -21,5 +21,5 @@
 ### <Project name> — <link>
 - <What it does + your contribution + impact.>
 
-<!-- This is a template. The Job Tracker skill fills it in via create-resume.md
-     and improves it via refine-resume.md. -->
+<!-- Master template. create-resume.md fills it into data/resume.md;
+     refine-resume.md tailors a copy into output/ for a specific job. -->

@@ -13,6 +13,7 @@ one model swap we allow.
 """
 import html
 import html.parser
+import json
 import os
 import re
 import subprocess
@@ -435,6 +436,65 @@ SCHEMAS: List[Dict] = [
     {
         "type": "function",
         "function": {
+            "name": "job_add",
+            "description": "Add a job application to the tracked pipeline (the source of truth). "
+                           "Use for 'I applied to X' or adding a role to the wishlist.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "company": {"type": "string"},
+                    "role": {"type": "string"},
+                    "jd_url": {"type": "string", "description": "Link to the job description"},
+                    "source": {"type": "string", "description": "referral / search / board / etc."},
+                    "status": {"type": "string", "description": "Wishlist|Applied|Screen|Interview|Offer|Accepted|Rejected|Withdrawn (default Applied)"},
+                    "date_applied": {"type": "string", "description": "YYYY-MM-DD"},
+                    "resume_version": {"type": "string", "description": "Which resume file was used"},
+                    "notes": {"type": "string"},
+                },
+                "required": ["company", "role"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "job_update",
+            "description": "Update a tracked application by id: change status / next action / notes, "
+                           "log an interview, or record an offer. Get the id from job_list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "Application id"},
+                    "status": {"type": "string"},
+                    "next_action": {"type": "string"},
+                    "next_action_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "notes": {"type": "string", "description": "Appended to existing notes"},
+                    "resume_version": {"type": "string"},
+                    "add_interview": {"type": "object", "description": "Interview round to append: round, date, type, interviewer, notes, outcome"},
+                    "offer": {"type": "object", "description": "Offer: base, equity, bonus, currency, deadline, status, notes"},
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "job_list",
+            "description": "List tracked applications with funnel counts; optionally filter by status. "
+                           "Use for 'what's my pipeline', follow-ups, and retrospective stats.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "description": "Filter to one status (optional)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "ask_coder",
             "description": "Delegate a programming task (write, explain, debug, or review code) to the "
                            "specialised coding model. Give a clear, self-contained brief with all needed context.",
@@ -494,6 +554,26 @@ def _top_cpu():
         except ValueError:
             pass
     return (None, None)
+
+
+_JOB_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "skills", "job-tracker", "data")
+_JOB_FILE = os.path.join(_JOB_DATA_DIR, "applications.json")
+
+
+def _job_load():
+    try:
+        with open(_JOB_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _job_save(records):
+    os.makedirs(_JOB_DATA_DIR, exist_ok=True)
+    with open(_JOB_FILE, "w") as f:
+        json.dump(records, f, indent=2)
 
 
 class ToolBox:
@@ -836,6 +916,68 @@ class ToolBox:
             return self._email_client(account).send(to, subject, body)
         except Exception as e:
             return f"Email error: {e}"
+
+    # ---- job tracker pipeline (tool-managed so records can't be corrupted) --
+    def job_add(self, company: str, role: str, jd_url: str = None, source: str = None,
+                status: str = "Applied", date_applied: str = None,
+                resume_version: str = None, notes: str = None) -> str:
+        recs = _job_load()
+        new_id = max((r.get("id", 0) for r in recs), default=0) + 1
+        recs.append({
+            "id": new_id, "company": company, "role": role, "jd_url": jd_url,
+            "source": source, "status": status, "date_applied": date_applied,
+            "resume_version": resume_version, "next_action": None,
+            "next_action_date": None, "notes": notes,
+            "interviews": [], "offer": None, "contacts": [],
+        })
+        _job_save(recs)
+        return f"Added #{new_id}: {company} — {role} [{status}]."
+
+    def job_update(self, id, status=None, next_action=None, next_action_date=None,
+                   notes=None, resume_version=None, add_interview=None, offer=None) -> str:
+        recs = _job_load()
+        try:
+            rid = int(id)
+        except (TypeError, ValueError):
+            return f"Invalid id: {id}"
+        rec = next((r for r in recs if r.get("id") == rid), None)
+        if not rec:
+            return f"No application with id {rid}. Use job_list to see ids."
+        for k, v in (("status", status), ("next_action", next_action),
+                     ("next_action_date", next_action_date), ("resume_version", resume_version)):
+            if v is not None:
+                rec[k] = v
+        if notes is not None:
+            rec["notes"] = (rec.get("notes") or "") + ("\n" if rec.get("notes") else "") + notes
+        if add_interview is not None:
+            rec.setdefault("interviews", []).append(add_interview)
+        if offer is not None:
+            rec["offer"] = offer
+        _job_save(recs)
+        return f"Updated #{rid}: {rec['company']} — {rec['role']} [{rec.get('status')}]."
+
+    def job_list(self, status: str = None) -> str:
+        recs = _job_load()
+        if not recs:
+            return "No applications tracked yet. Use job_add to start."
+        from collections import Counter
+        counts = Counter(r.get("status", "?") for r in recs)
+        shown = [r for r in recs if not status or r.get("status", "").lower() == status.lower()]
+        out = [f"Pipeline ({len(recs)} total): " + ", ".join(f"{k} {v}" for k, v in counts.items())]
+        if status:
+            out.append(f"— filtered to {status} ({len(shown)})")
+        for r in shown:
+            line = f"#{r['id']} {r.get('company')} — {r.get('role')} [{r.get('status')}]"
+            if r.get("next_action"):
+                line += f" · next: {r['next_action']}"
+                if r.get("next_action_date"):
+                    line += f" by {r['next_action_date']}"
+            out.append(line)
+            for iv in (r.get("interviews") or []):
+                out.append(f"    · interview: {iv}")
+            if r.get("offer"):
+                out.append(f"    · offer: {r['offer']}")
+        return self._truncate("\n".join(out))
 
     # ---- dispatch ----------------------------------------------------------
     def dispatch(self, name: str, args: Dict) -> str:

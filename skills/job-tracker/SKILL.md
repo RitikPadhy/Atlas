@@ -1,29 +1,54 @@
-# Job Tracker — create & refine resumes and track job applications
+# Job Tracker — run a job search end to end: discover, apply, track, interview, offer
 
 ## When to use this skill
-Engage this skill when the user's request involves their **job search**: writing or
-building a **resume / CV**, **refining / tailoring** a resume to a role, or
-**tracking job applications** (where they applied, status, next steps, interviews).
-Trigger words: resume, CV, cover letter, apply/applied, application, job, role,
-interview, offer, recruiter, job search, "tailor my resume", "track my jobs".
+Engage for anything in the user's **job search**: finding roles, evaluating a job
+against their profile, writing/tailoring a **resume or cover letter**, **applying**,
+**tracking applications**, **follow-ups**, **company research**, **interview prep**
+and logging, **offers/negotiation**, and **retrospective analytics**.
+Triggers: job, role, apply/applied, application, resume, CV, cover letter, recruiter,
+interview, offer, negotiate, "tailor my resume", "track my jobs", "what's my pipeline".
 
-## How to use it
-1. Read this SKILL.md, then read the specific guide file for the task below.
-2. Follow that guide's steps. Ask the user for any details you don't have.
-3. The working data lives in `resume.md` and `applications.md` — read them before
-   editing, and use the `write_file` tool to save changes (it will confirm first).
+## How the data is stored (read this)
+- **The application pipeline is tool-managed** — use the `job_add`, `job_update`, and
+  `job_list` tools. NEVER hand-edit the pipeline file; the tools keep it from being
+  corrupted. Each application record can carry its interviews and offer inline.
+- **Other files** live under this skill's folder (the absolute path is given to you
+  when the skill is invoked). Read/write them with `read_file` / `write_file`:
+  - `config/profile.md` — the user's profile (target roles, locations, preferences).
+  - `data/resume.md` — the working master resume.
+  - `data/star-stories.md` — reusable STAR interview stories.
+  - `companies/<name>.md` — research notes per company.
+  - `output/` — generated artifacts (tailored resumes, cover letters).
+  - `templates/` — starting templates (committed; copy, don't overwrite).
+- Personal data (`data/`, `output/`, `companies/`) is git-ignored — never committed.
 
-## Files in this skill
-| File | Purpose |
-| ---- | ------- |
-| `SKILL.md` | This manifest — when to use the skill and what each file does. |
-| `create-resume.md` | Step-by-step guide to build a resume from scratch into `resume.md`. |
-| `refine-resume.md` | Guide to improve/tailor an existing `resume.md` to a target role. |
-| `resume.md` | The user's working resume (the live document you create & edit). |
-| `applications.md` | The job-application tracker (a table of companies/roles/status). |
-| `track-status.md` | Guide to read and update `applications.md`. |
+## Application status pipeline (canonical)
+`Wishlist → Applied → Screen → Interview → Offer → Accepted` — or `Rejected` /
+`Withdrawn` at any point. Use these exact status words with `job_update`.
 
-## Routing the user's request
-- "make/build/write my resume" → follow `create-resume.md`.
-- "improve / tailor / fix my resume", or they paste a job description → follow `refine-resume.md`.
-- "I applied to…", "what's my status", "update X to interview", "what's pending" → follow `track-status.md`.
+## Files (guides) and when to use each
+| Request | Guide to read |
+| ------- | ------------- |
+| "find / search for jobs", build a wishlist | `guides/discover.md` |
+| "is this job a good fit?", score a JD | `guides/evaluate.md` |
+| "make / build my resume" | `guides/create-resume.md` |
+| "tailor / improve my resume" (to a JD) | `guides/refine-resume.md` |
+| "write a cover letter" | `guides/cover-letter.md` |
+| "I applied to X", "track this", "what's my pipeline" | `guides/apply-and-track.md` |
+| "follow up", "what's pending / overdue" | `guides/follow-up.md` |
+| "research <company>" | `guides/research-company.md` |
+| "prep me for an interview", log an interview | `guides/interview.md` |
+| "I got an offer", compare/negotiate offers | `guides/offers.md` |
+| "how's my search going", funnel stats | `guides/retrospective.md` |
+
+## How to work
+1. Read the matching guide above, then follow its steps.
+2. Ask the user for any details you don't have (don't invent companies, dates, comp).
+3. Use the user's other tools where the guide says to — `web_search`/`web_fetch`
+   (discovery, research), `gmail_search`/`mail_search`/`gmail_send` (recruiter mail,
+   follow-ups), `gcal_events`/`gcal_create_event` and `reminders` (interviews, deadlines).
+4. For pipeline changes, always go through `job_add`/`job_update`/`job_list`.
+
+## First-time setup to mention if nothing exists yet
+If `config/profile.md` is missing, offer to create it from `config/profile.example.md`;
+if `data/resume.md` is missing, route to `guides/create-resume.md`.
