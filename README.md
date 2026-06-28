@@ -132,6 +132,7 @@ Google tools just report they aren't set up; the rest of the agent works regardl
 
 | Key | Meaning |
 | --- | ------- |
+| `provider` | Which model backend to use (`ollama` today; add more in `backends/`) |
 | `models.brain` / `models.coder` | The resident brain and the coding specialist |
 | `keep_alive` | How long a model stays in the GPU after last use (`"5m"`) |
 | `think_by_default` | Start with qwen3 thinking mode on/off |
@@ -144,15 +145,24 @@ Google tools just report they aren't set up; the rest of the agent works regardl
 
 | File | Responsibility |
 | ---- | -------------- |
-| `ai_agent.py` | REPL entry point — input, secret scan, commands |
-| `agent.py` | The orchestrator loop + tool-call parsing + system prompt |
+| `ai_agent.py` | REPL entry point — input, secret scan, `/` shortcuts, `@` skills |
+| `agent.py` | The orchestrator loop (provider-agnostic) + system prompt |
+| `backends/` | Model backends behind one interface (`base.py`, `ollama_backend.py`) |
 | `tools.py` | The tools (verbs) + `ask_coder` delegation |
-| `ollama_client.py` | `ollama list` + tool-calling `/api/chat` |
+| `ollama_client.py` | `ollama list` + tool-calling `/api/chat` (used by the Ollama backend) |
+| `shortcuts/` | `/`-invoked saved prompts · `skills/` — `@`-invoked playbooks |
 | `secret_scanner.py` | Regex secret detection |
 | `ui.py` | Terminal colors / prompts |
 | `config.json` | All tunables |
 | `install.sh` | Adds the `ai` alias |
 | `ThingsToDo.md` | Roadmap |
+
+## Switching models / providers
+
+This runs on **local Ollama models** (`provider: "ollama"` in `config.json`). The
+model layer is pluggable via a **Backend** interface (`backends/`), so the underlying
+model can be swapped later without touching tools, skills, shortcuts, services, or
+guardrails. If/when you want to switch, see **[`docs/switching-providers.md`](docs/switching-providers.md)**.
 
 ## Notes & limitations
 

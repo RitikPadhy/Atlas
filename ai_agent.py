@@ -18,7 +18,7 @@ import warnings
 warnings.filterwarnings("ignore", message=".*OpenSSL.*")
 
 import agent
-import ollama_client
+import backends
 import secret_scanner
 import tools as tools_mod
 import ui
@@ -83,10 +83,55 @@ def fresh_messages(cfg: dict) -> list:
             f"invent names. When the user asks which email/accounts are connected, call "
             f"list_accounts (it covers BOTH Google and the private email)."
         )})
+    skills = list_skills()
+    if skills:
+        listing = "; ".join(f"@{n} ({p})" for n, p, _ in skills)
+        msgs.append({"role": "system", "content": (
+            f"Skills (multi-step playbooks) are invoked explicitly by the user with @<name>. "
+            f"Available: {listing}. If a request clearly fits one and the user didn't use @, "
+            f"you may suggest it (e.g. 'try @{skills[0][0]}'). When a skill is invoked its "
+            f"playbook is injected into the message — just follow it."
+        )})
     return msgs
 
 
-SHORTCUTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shortcuts")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SHORTCUTS_DIR = os.path.join(HERE, "shortcuts")
+SKILLS_DIR = os.path.join(HERE, "skills")
+
+
+def list_skills() -> list:
+    """Return (name, purpose, abs_skill_md_path) for each skill folder with a SKILL.md."""
+    out = []
+    if not os.path.isdir(SKILLS_DIR):
+        return out
+    for name in sorted(os.listdir(SKILLS_DIR)):
+        folder = os.path.join(SKILLS_DIR, name)
+        if not os.path.isdir(folder):
+            continue
+        skill_md = next((os.path.join(folder, f) for f in os.listdir(folder)
+                         if f.lower() == "skill.md"), None)
+        if not skill_md:
+            continue
+        purpose = ""
+        with open(skill_md) as fh:
+            for line in fh:
+                line = line.strip().lstrip("#").strip()
+                if line:
+                    purpose = line
+                    break
+        out.append((name, purpose, skill_md))
+    return out
+
+
+def load_skill(name: str):
+    """Return (skill_md_text, skill_folder_abs) for a skill, or None if missing."""
+    info = next((s for s in list_skills() if s[0] == name), None)
+    if not info:
+        return None
+    _, _, skill_md = info
+    with open(skill_md) as f:
+        return f.read().strip(), os.path.dirname(skill_md)
 
 
 def list_shortcuts() -> list:
@@ -125,11 +170,15 @@ if _HAVE_PTK:
         commands/shortcuts and filter them as more letters are typed."""
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
-            if not text.startswith("/"):
-                return
-            for opt, meta in slash_options():
-                if opt.startswith(text):
-                    yield Completion(opt, start_position=-len(text), display_meta=meta)
+            if text.startswith("/"):
+                for opt, meta in slash_options():
+                    if opt.startswith(text):
+                        yield Completion(opt, start_position=-len(text), display_meta=meta)
+            elif text.startswith("@"):
+                for name, purpose, _ in list_skills():
+                    opt = "@" + name
+                    if opt.startswith(text):
+                        yield Completion(opt, start_position=-len(text), display_meta=purpose)
 
 
 def make_session():
@@ -148,34 +197,28 @@ def read_line(session, prompt_text: str) -> str:
 
 def main() -> None:
     cfg = load_config()
-    host = cfg["ollama_host"]
-    brain = cfg["models"]["brain"]
-    coder = cfg["models"]["coder"]
     keep_alive = cfg.get("keep_alive", "5m")
     think = cfg.get("think_by_default", False)
 
     ui.banner("AI Agent Center")
 
+    backend = backends.get_backend(cfg)
     try:
-        installed = ollama_client.list_models()
-    except ollama_client.OllamaError as e:
+        backend.preflight()
+    except backends.BackendError as e:
         ui.error(str(e))
         sys.exit(1)
-
-    for needed in (brain, coder):
-        if needed not in installed:
-            ui.error(f"Required model '{needed}' is not installed. Run: ollama pull {needed}")
-            sys.exit(1)
 
     toolbox = tools_mod.ToolBox(cfg, confirm=confirm, notify=ui.warn)
     messages = fresh_messages(cfg)
     session = make_session()
     prompt_text = f"\n{ui.BOLD}{ui.CYAN}atlas{ui.RESET} {ui.DIM}❯{ui.RESET} "
 
-    ui.ok(f"Brain: {ui.BOLD}{brain}{ui.RESET}  ·  coding specialist: {ui.BOLD}{coder}{ui.RESET}")
-    hint = "type / for a live menu" if session else "type / and Enter for the menu"
-    ui.info(f"Type what you want. Shortcuts & commands: {hint}.")
-    ui.info(f"Models auto-unload from the GPU after {keep_alive} idle.")
+    ui.ok(backend.label)
+    enter = "" if session else " and Enter"
+    ui.info(f"Type what you want.  /{enter} = shortcuts & commands · @{enter} = skills")
+    if backend.is_local:
+        ui.info(f"Models auto-unload from the GPU after {keep_alive} idle.")
 
     while True:
         try:
@@ -236,6 +279,36 @@ def main() -> None:
             raw = body if not extra else f"{body}\n\nExtra instruction from the user: {extra}"
             # fall through — `raw` is now the shortcut's prompt
 
+        elif raw.startswith("@"):
+            name, _, task = raw[1:].partition(" ")
+            name, task = name.strip(), task.strip()
+            if name == "":  # bare "@" → list skills
+                skills = list_skills()
+                if skills:
+                    ui.info("Skills (invoke with @<name>):")
+                    for n, purpose, _ in skills:
+                        print(f"  {ui.BOLD}@{n}{ui.RESET} — {purpose}")
+                else:
+                    ui.info("No skills yet — add one under skills/<name>/SKILL.md.")
+                continue
+            loaded = load_skill(name)
+            if loaded is None:
+                ui.warn(f"Unknown skill: @{name}")
+                names = [s[0] for s in list_skills()]
+                if names:
+                    ui.info("Available skills: " + ", ".join("@" + n for n in names))
+                continue
+            content, folder = loaded
+            ui.info(f"Engaging skill @{name}…")
+            raw = (
+                f"{content}\n\n---\n"
+                f"The user has invoked the '{name}' skill; its playbook is above. The skill's "
+                f"files are in this folder: {folder} — use read_file (with the absolute path) to "
+                f"open any guide or data file the playbook references. "
+                f"User's request: {task or '(none yet — briefly ask what they want to do in this skill)'}"
+            )
+            # fall through — `raw` is now the loaded skill playbook + the request
+
         # Secret-scan what the user typed before it ever reaches a model.
         findings = secret_scanner.scan(raw, cfg["secret_patterns"])
         if findings:
@@ -249,16 +322,16 @@ def main() -> None:
         messages.append({"role": "user", "content": raw})
         try:
             messages = agent.run(
-                toolbox, brain, messages,
-                host=host, keep_alive=keep_alive,
-                max_steps=cfg.get("max_steps", 8), think=think,
+                toolbox, backend, messages,
+                max_steps=cfg.get("max_steps", 12), think=think,
             )
-        except ollama_client.OllamaError as e:
+        except backends.BackendError as e:
             ui.error(str(e))
         except KeyboardInterrupt:
             print(f"\n{ui.DIM}(interrupted){ui.RESET}")
 
-    ui.info(f"Models will unload from the GPU after {keep_alive} of inactivity.")
+    if backend.is_local:
+        ui.info(f"Models will unload from the GPU after {keep_alive} of inactivity.")
 
 
 if __name__ == "__main__":

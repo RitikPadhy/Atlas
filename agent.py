@@ -1,25 +1,21 @@
-"""The orchestrator loop.
+"""The orchestrator loop — provider-agnostic.
 
-The brain model is given the user's messages plus the tool schemas. It either
-answers directly or emits tool calls; we run those, feed the results back, and
-loop until it produces a final answer or hits the step cap.
-
-Local models are inconsistent about *how* they emit tool calls — some use the
-native `tool_calls` field, others print `<tool_call>{...}</tool_call>` tags or a
-bare JSON object in the text. `extract_tool_calls()` normalises all of these.
+It talks only to a Backend (see backends/), which returns a normalized reply:
+{"content": str, "tool_calls": [{"name", "arguments"}, ...]}. The loop runs any
+tool calls, feeds results back, and repeats until a final answer or the step cap.
+Conversation history is the OpenAI/Ollama-style message format; the backend
+translates to/from its provider's shape.
 """
-import json
-import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
-import ollama_client
 import tools as tools_mod
 import ui
 
 SYSTEM_PROMPT = """You are the orchestrator of a terminal AI assistant running on the user's Mac.
 
 You can call tools to get real work done: open URLs/apps/files, run shell commands,
-read/write files, check the Mac's health, and delegate coding to a specialist.
+read/write files, check the Mac's health, search the web, manage email and Google
+services, and delegate coding to a specialist.
 
 Guidelines:
 - When an action is needed, CALL A TOOL. Do not pretend or describe what you would do.
@@ -40,88 +36,26 @@ Guidelines:
   you do NOT have a tool for, say plainly that you can't do that yet — name what's
   missing. Never pretend an action happened, invent a result, or fabricate a tool."""
 
-_TOOL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
-_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
-_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
-
-def _norm(obj: Dict) -> Optional[Dict]:
-    """Normalise one tool-call object to {'name', 'arguments'}."""
-    if not isinstance(obj, dict):
-        return None
-    if "function" in obj and isinstance(obj["function"], dict):
-        fn = obj["function"]
-        name, args = fn.get("name"), fn.get("arguments", {})
-    else:
-        name = obj.get("name")
-        args = obj.get("arguments", obj.get("parameters", {}))
-    if not name:
-        return None
-    if isinstance(args, str):
-        try:
-            args = json.loads(args)
-        except json.JSONDecodeError:
-            args = {}
-    return {"name": name, "arguments": args or {}}
-
-
-def extract_tool_calls(msg: Dict) -> Tuple[List[Dict], str]:
-    """Return (tool_calls, answer_text). If tool_calls is non-empty the model
-    wants to act; otherwise answer_text is its final reply."""
-    native = msg.get("tool_calls")
-    if native:
-        calls = [c for c in (_norm(c) for c in native) if c]
-        if calls:
-            return calls, ""
-
-    content = _THINK.sub("", msg.get("content") or "").strip()
-    if not content:
-        return [], ""
-
-    # <tool_call>{...}</tool_call> tags
-    tagged = [m.group(1) for m in _TOOL_TAG.finditer(content)]
-    # ```json {...} ``` fences
-    fenced = [m.group(1) for m in _FENCE.finditer(content)]
-    # a whole-content bare JSON object
-    bare = [content] if content.startswith("{") and content.endswith("}") else []
-
-    calls = []
-    for blob in tagged + fenced + bare:
-        try:
-            obj = json.loads(blob)
-        except json.JSONDecodeError:
-            continue
-        c = _norm(obj)
-        if c:
-            calls.append(c)
-    if calls:
-        return calls, ""
-
-    return [], content
-
-
-def run(toolbox: "tools_mod.ToolBox", brain: str, messages: List[Dict],
-        host: str, keep_alive: str, max_steps: int, think: bool) -> List[Dict]:
+def run(toolbox: "tools_mod.ToolBox", backend, messages: List[Dict],
+        max_steps: int, think: bool) -> List[Dict]:
     """Run the agent loop, mutating and returning `messages`."""
     for _ in range(max_steps):
-        msg = ollama_client.chat(
-            host, brain, messages,
-            tools=tools_mod.SCHEMAS,
-            think=think,
-            keep_alive=keep_alive,
-        )
-        calls, answer = extract_tool_calls(msg)
+        reply = backend.chat(messages, tools=tools_mod.SCHEMAS, think=think)
+        calls = reply.get("tool_calls") or []
 
         if not calls:
+            answer = (reply.get("content") or "").strip()
             print(f"\n{ui.CYAN}assistant ›{ui.RESET} {answer}\n")
             messages.append({"role": "assistant", "content": answer})
             return messages
 
-        # Record the assistant's tool-call turn in a clean, native shape.
+        # Record the assistant's tool-call turn in canonical (OpenAI/Ollama) shape.
         messages.append({
             "role": "assistant",
             "content": "",
-            "tool_calls": [{"function": {"name": c["name"], "arguments": c["arguments"]}} for c in calls],
+            "tool_calls": [{"function": {"name": c["name"], "arguments": c["arguments"]}}
+                           for c in calls],
         })
 
         for c in calls:

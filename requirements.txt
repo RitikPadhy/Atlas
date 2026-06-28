@@ -12,3 +12,6 @@ google-auth-oauthlib>=1.0.0
 # Optional — enables the live "/" command/shortcut dropdown as you type.
 # Without it, "/" + Enter still lists shortcuts (plain-input fallback).
 prompt_toolkit>=3.0.0
+
+# Switching to a cloud provider (e.g. the Anthropic API) needs an extra package —
+# see docs/switching-providers.md. Not required for the current local setup.

@@ -1,4 +1,5 @@
 {
+  "provider": "ollama",
   "ollama_host": "http://localhost:11434",
   "keep_alive": "5m",
   "models": {
